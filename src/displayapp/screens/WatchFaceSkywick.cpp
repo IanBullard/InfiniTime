@@ -1,4 +1,4 @@
-#include "displayapp/screens/WatchFacePanel.h"
+#include "displayapp/screens/WatchFaceSkywick.h"
 
 #include <lvgl/lvgl.h>
 #include <cctype>
@@ -57,13 +57,16 @@ namespace {
   constexpr lv_coord_t dividerY = 49;
   constexpr lv_coord_t dividerWidth = 220;
   constexpr lv_coord_t forecastRowY = 63;
-  // Two-letter day names leave room for a three-character high ("-15", "104"): a worst-case column is
-  // ~72px, so three columns span the panel's full inner width with ~5px between them.
-  constexpr lv_coord_t forecastX = 6;
-  constexpr lv_coord_t forecastColumnWidth = 77;
-  constexpr lv_coord_t forecastIconOffset = 21;
-  constexpr lv_coord_t forecastTempOffset = 43;
+  // Each column: day name pinned left, high right-aligned, icon centred in the space between, so slack
+  // from narrow icons or two-digit highs spreads evenly. Worst case (20px name + 20px icon + 30px "-15")
+  // just fits the 71px content width; columns are 4px apart.
+  constexpr lv_coord_t forecastX = 5;
+  constexpr lv_coord_t forecastColumnWidth = 75;
+  constexpr lv_coord_t forecastContentWidth = 71;
   constexpr size_t forecastDayNameLength = 2;
+
+  // Time digits are centred in their panel; with the AM/PM label shown they drop a little to clear it.
+  constexpr lv_coord_t timeOffsetWithAmPm = 3;
 
   lv_obj_t* CreatePanel(lv_coord_t y, lv_coord_t height) {
     lv_obj_t* panel = lv_obj_create(lv_scr_act(), nullptr);
@@ -121,7 +124,7 @@ namespace {
   }
 }
 
-WatchFacePanel::WatchFacePanel(Controllers::DateTime& dateTimeController,
+WatchFaceSkywick::WatchFaceSkywick(Controllers::DateTime& dateTimeController,
                                const Controllers::Battery& batteryController,
                                const Controllers::Ble& bleController,
                                Controllers::Settings& settingsController,
@@ -157,7 +160,7 @@ WatchFacePanel::WatchFacePanel(Controllers::DateTime& dateTimeController,
 
   // Date band
   datePanel = CreatePanel(dateY, dateHeight);
-  weekdayLabel = CreateLabel(datePanel, &jetbrains_mono_bold_20, colorBlue);
+  weekdayLabel = CreateLabel(datePanel, &jetbrains_mono_bold_20, colorLabel);
   lv_label_set_text_static(weekdayLabel, "");
   dateLabel = CreateLabel(datePanel, &jetbrains_mono_bold_20, LV_COLOR_WHITE);
   lv_label_set_text_static(dateLabel, "");
@@ -193,12 +196,12 @@ WatchFacePanel::WatchFacePanel(Controllers::DateTime& dateTimeController,
   Refresh();
 }
 
-WatchFacePanel::~WatchFacePanel() {
+WatchFaceSkywick::~WatchFaceSkywick() {
   lv_task_del(taskRefresh);
   lv_obj_clean(lv_scr_act());
 }
 
-void WatchFacePanel::Refresh() {
+void WatchFaceSkywick::Refresh() {
   bleConnected = bleController.IsConnected();
   if (bleConnected.IsUpdated()) {
     lv_obj_set_hidden(bleIcon, !bleConnected.Get());
@@ -229,7 +232,8 @@ void WatchFacePanel::Refresh() {
     uint8_t hour = dateTimeController.Hours();
     uint8_t minute = dateTimeController.Minutes();
 
-    if (settingsController.GetClockType() == Controllers::Settings::ClockType::H12) {
+    const bool h12 = settingsController.GetClockType() == Controllers::Settings::ClockType::H12;
+    if (h12) {
       lv_label_set_text_static(ampmLabel, hour < 12 ? "AM" : "PM");
       if (hour == 0) {
         hour = 12;
@@ -241,8 +245,7 @@ void WatchFacePanel::Refresh() {
       lv_label_set_text_static(ampmLabel, "");
       lv_label_set_text_fmt(timeLabel, "%02d:%02d", hour, minute);
     }
-    // Digits sit below centre to clear the AM/PM label.
-    lv_obj_align(timeLabel, nullptr, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(timeLabel, nullptr, LV_ALIGN_CENTER, 0, h12 ? timeOffsetWithAmPm : 0);
     lv_obj_align(ampmLabel, nullptr, LV_ALIGN_IN_TOP_LEFT, 10, 4);
 
     currentDate = std::chrono::time_point_cast<std::chrono::days>(currentDateTime.Get());
@@ -270,7 +273,7 @@ void WatchFacePanel::Refresh() {
   }
 }
 
-void WatchFacePanel::UpdateDate() {
+void WatchFaceSkywick::UpdateDate() {
   lv_label_set_text_static(weekdayLabel, dateTimeController.DayOfWeekShortToString());
   lv_label_set_text_fmt(dateLabel,
                         "%d.%d.%d",
@@ -283,14 +286,14 @@ void WatchFacePanel::UpdateDate() {
   AlignLeftMid(dateLabel, x + weekdayWidth + dateGap, dateHeight / 2);
 }
 
-int16_t WatchFacePanel::DisplayTemperature(const Controllers::SimpleWeatherService::Temperature& temperature) const {
+int16_t WatchFaceSkywick::DisplayTemperature(const Controllers::SimpleWeatherService::Temperature& temperature) const {
   if (settingsController.GetWeatherFormat() == Controllers::Settings::WeatherFormat::Imperial) {
     return temperature.Fahrenheit();
   }
   return temperature.Celsius();
 }
 
-void WatchFacePanel::UpdateCurrentWeather() {
+void WatchFaceSkywick::UpdateCurrentWeather() {
   const auto& optWeather = currentWeather.Get();
   if (optWeather) {
     const char unit = settingsController.GetWeatherFormat() == Controllers::Settings::WeatherFormat::Imperial ? 'F' : 'C';
@@ -299,8 +302,10 @@ void WatchFacePanel::UpdateCurrentWeather() {
     SetTextColor(weatherTemp, LV_COLOR_WHITE);
     lv_label_set_text_static(weatherIcon, Symbols::GetSymbol(optWeather->iconId, isNight));
     lv_label_set_text_fmt(weatherTemp, "%d°%c", DisplayTemperature(optWeather->temperature), unit);
-    lv_label_set_text_fmt(weatherHigh, "H %d", DisplayTemperature(optWeather->maxTemperature));
-    lv_label_set_text_fmt(weatherLow, "L %d", DisplayTemperature(optWeather->minTemperature));
+    // Fixed width for the design range (-50..120, both units): the monospace font keeps H and L and
+    // their right-aligned numbers lined up. Values outside that range still print, just wider.
+    lv_label_set_text_fmt(weatherHigh, "H %3d", DisplayTemperature(optWeather->maxTemperature));
+    lv_label_set_text_fmt(weatherLow, "L %3d", DisplayTemperature(optWeather->minTemperature));
   } else {
     // No data yet (the phone hasn't pushed any): a dimmed placeholder keeps the panel from looking broken.
     SetTextColor(weatherIcon, colorDivider);
@@ -316,7 +321,7 @@ void WatchFacePanel::UpdateCurrentWeather() {
   AlignRightMid(weatherLow, highLowRight, lowY);
 }
 
-void WatchFacePanel::UpdateForecast() {
+void WatchFaceSkywick::UpdateForecast() {
   const auto& optForecast = forecast.Get();
   // Day labels follow the stock Weather app: days[0] is the day after the forecast timestamp.
   std::tm forecastDate {};
@@ -353,16 +358,18 @@ void WatchFacePanel::UpdateForecast() {
     lv_label_set_text_fmt(day.high, "%d", DisplayTemperature(data.maxTemperature));
 
     const lv_coord_t x = forecastX + static_cast<lv_coord_t>(i) * forecastColumnWidth;
+    const lv_coord_t nameWidth = lv_obj_get_width(day.name);
+    const lv_coord_t space = forecastContentWidth - nameWidth - lv_obj_get_width(day.high);
     AlignLeftMid(day.name, x, forecastRowY);
-    AlignLeftMid(day.icon, x + forecastIconOffset, forecastRowY);
-    AlignLeftMid(day.high, x + forecastTempOffset, forecastRowY);
+    AlignLeftMid(day.icon, x + nameWidth + (space - lv_obj_get_width(day.icon)) / 2, forecastRowY);
+    AlignRightMid(day.high, x + forecastContentWidth, forecastRowY);
   }
 }
 
-void WatchFacePanel::AlignLeftMid(lv_obj_t* obj, lv_coord_t x, lv_coord_t centerY) {
+void WatchFaceSkywick::AlignLeftMid(lv_obj_t* obj, lv_coord_t x, lv_coord_t centerY) {
   lv_obj_align(obj, nullptr, LV_ALIGN_IN_TOP_LEFT, x, centerY - lv_obj_get_height(obj) / 2);
 }
 
-void WatchFacePanel::AlignRightMid(lv_obj_t* obj, lv_coord_t right, lv_coord_t centerY) {
+void WatchFaceSkywick::AlignRightMid(lv_obj_t* obj, lv_coord_t right, lv_coord_t centerY) {
   lv_obj_set_pos(obj, right - lv_obj_get_width(obj), centerY - lv_obj_get_height(obj) / 2);
 }

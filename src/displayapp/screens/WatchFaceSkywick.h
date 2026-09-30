@@ -24,18 +24,18 @@ namespace Pinetime {
   namespace Applications {
     namespace Screens {
 
-      // Panel-grid face: a thin status strip (BLE, steps, charging, battery) over filled cards for
+      // Skywick: a thin status strip (BLE, steps, charging, battery) over filled cards for
       // date, time and weather (current conditions plus a 3-day forecast row). Colours follow
       // Apple's dark-mode palette; red is reserved for problems.
-      class WatchFacePanel : public Screen {
+      class WatchFaceSkywick : public Screen {
       public:
-        WatchFacePanel(Controllers::DateTime& dateTimeController,
+        WatchFaceSkywick(Controllers::DateTime& dateTimeController,
                        const Controllers::Battery& batteryController,
                        const Controllers::Ble& bleController,
                        Controllers::Settings& settingsController,
                        Controllers::MotionController& motionController,
                        Controllers::SimpleWeatherService& weatherService);
-        ~WatchFacePanel() override;
+        ~WatchFaceSkywick() override;
 
         void Refresh() override;
 
@@ -98,12 +98,12 @@ namespace Pinetime {
     }
 
     template <>
-    struct WatchFaceTraits<WatchFace::Panel> {
-      static constexpr WatchFace watchFace = WatchFace::Panel;
-      static constexpr const char* name = "Panel";
+    struct WatchFaceTraits<WatchFace::Skywick> {
+      static constexpr WatchFace watchFace = WatchFace::Skywick;
+      static constexpr const char* name = "Skywick";
 
       static Screens::Screen* Create(AppControllers& controllers) {
-        return new Screens::WatchFacePanel(controllers.dateTimeController,
+        return new Screens::WatchFaceSkywick(controllers.dateTimeController,
                                            controllers.batteryController,
                                            controllers.bleController,
                                            controllers.settingsController,

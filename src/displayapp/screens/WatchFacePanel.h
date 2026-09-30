@@ -24,8 +24,9 @@ namespace Pinetime {
   namespace Applications {
     namespace Screens {
 
-      // Panel-grid face: a thin status strip (BLE, steps, charging, battery) over framed panels for
-      // date, time and weather (current conditions plus a 3-day forecast row).
+      // Panel-grid face: a thin status strip (BLE, steps, charging, battery) over filled cards for
+      // date, time and weather (current conditions plus a 3-day forecast row). Colours follow
+      // Apple's dark-mode palette; red is reserved for problems.
       class WatchFacePanel : public Screen {
       public:
         WatchFacePanel(Controllers::DateTime& dateTimeController,
@@ -47,6 +48,7 @@ namespace Pinetime {
           lv_obj_t* high;
         };
 
+        void UpdateDate();
         void UpdateCurrentWeather();
         void UpdateForecast();
         int16_t DisplayTemperature(const Controllers::SimpleWeatherService::Temperature& temperature) const;
@@ -70,6 +72,7 @@ namespace Pinetime {
         BatteryIcon batteryIcon;
 
         lv_obj_t* datePanel;
+        lv_obj_t* weekdayLabel;
         lv_obj_t* dateLabel;
 
         lv_obj_t* timePanel;

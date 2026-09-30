@@ -1,4 +1,5 @@
 set(FONTS jetbrains_mono_42 jetbrains_mono_76 jetbrains_mono_bold_20
+   jetbrains_mono_light_72 jetbrains_mono_bold_16
    jetbrains_mono_extrabold_compressed lv_font_sys_48
    open_sans_light fontawesome_weathericons)
 find_program(LV_FONT_CONV "lv_font_conv" NO_CACHE REQUIRED

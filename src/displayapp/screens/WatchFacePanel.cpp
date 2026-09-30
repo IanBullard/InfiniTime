@@ -1,8 +1,11 @@
 #include "displayapp/screens/WatchFacePanel.h"
 
 #include <lvgl/lvgl.h>
+#include <cctype>
+#include <ctime>
 
 #include "displayapp/screens/Symbols.h"
+#include "displayapp/screens/WeatherSymbols.h"
 #include "components/battery/BatteryController.h"
 #include "components/ble/BleController.h"
 #include "components/motion/MotionController.h"
@@ -15,14 +18,36 @@ namespace {
   const lv_color_t colorText = LV_COLOR_MAKE(0xcf, 0xd4, 0xda);
   const lv_color_t colorMuted = LV_COLOR_MAKE(0x8a, 0x90, 0x99);
 
-  // FontAwesome bolt (U+F0E7); the glyph lives in jetbrains_mono_bold_16.
-  constexpr const char* symbolBolt = "\xEF\x83\xA7";
+  // Status strip: every element is jetbrains_mono_bold_16, which carries the bluetooth, shoe and plug glyphs.
+  constexpr lv_coord_t stripInset = 6;
+  constexpr lv_coord_t stripY = 4;
+  constexpr lv_coord_t stepsX = 30; // fixed, so steps don't shift when the BLE icon hides
 
   // Screen layout (240x240). Panels share a 2px border inset 2px from the screen edge.
   constexpr lv_coord_t panelX = 2;
   constexpr lv_coord_t panelWidth = 236;
   constexpr lv_coord_t panelBorder = 2;
   constexpr lv_coord_t panelRadius = 3;
+
+  // Weather panel. Coordinates below are relative to the panel; row positions are vertical centres.
+  constexpr lv_coord_t weatherY = 162;
+  constexpr lv_coord_t weatherHeight = 76;
+  constexpr lv_coord_t currentRowY = 24;
+  constexpr lv_coord_t currentIconX = 12;
+  constexpr lv_coord_t currentTempX = 48;
+  constexpr lv_coord_t highLowRight = 226;
+  constexpr lv_coord_t highY = 15;
+  constexpr lv_coord_t lowY = 33;
+  constexpr lv_coord_t dividerY = 49;
+  constexpr lv_coord_t dividerWidth = 220;
+  constexpr lv_coord_t forecastRowY = 63;
+  // Two-letter day names leave room for a three-character high ("-15", "104"): a worst-case column is
+  // ~72px, so three columns span the panel's full inner width with ~5px between them.
+  constexpr lv_coord_t forecastX = 6;
+  constexpr lv_coord_t forecastColumnWidth = 77;
+  constexpr lv_coord_t forecastIconOffset = 21;
+  constexpr lv_coord_t forecastTempOffset = 43;
+  constexpr size_t forecastDayNameLength = 2;
 
   lv_obj_t* CreatePanel(lv_coord_t y, lv_coord_t height) {
     lv_obj_t* panel = lv_obj_create(lv_scr_act(), nullptr);
@@ -47,27 +72,35 @@ WatchFacePanel::WatchFacePanel(Controllers::DateTime& dateTimeController,
                                const Controllers::Battery& batteryController,
                                const Controllers::Ble& bleController,
                                Controllers::Settings& settingsController,
-                               Controllers::MotionController& motionController)
+                               Controllers::MotionController& motionController,
+                               Controllers::SimpleWeatherService& weatherService)
   : batteryIcon(true),
     dateTimeController {dateTimeController},
     batteryController {batteryController},
     bleController {bleController},
     settingsController {settingsController},
-    motionController {motionController} {
+    motionController {motionController},
+    weatherService {weatherService} {
 
   // Status strip
-  bleIcon = CreateLabel(lv_scr_act(), &jetbrains_mono_bold_20, colorText);
+  bleIcon = CreateLabel(lv_scr_act(), &jetbrains_mono_bold_16, colorText);
   lv_label_set_text_static(bleIcon, Symbols::bluetooth);
-  lv_obj_align(bleIcon, nullptr, LV_ALIGN_IN_TOP_LEFT, 6, 2);
+  lv_obj_align(bleIcon, nullptr, LV_ALIGN_IN_TOP_LEFT, stripInset, stripY);
+
+  stepsIcon = CreateLabel(lv_scr_act(), &jetbrains_mono_bold_16, colorText);
+  lv_label_set_text_static(stepsIcon, Symbols::shoe);
+  lv_obj_align(stepsIcon, nullptr, LV_ALIGN_IN_TOP_LEFT, stepsX, stripY);
+  stepsValue = CreateLabel(lv_scr_act(), &jetbrains_mono_bold_16, colorMuted);
+  lv_label_set_text_static(stepsValue, "");
 
   batteryIcon.Create(lv_scr_act());
-  lv_obj_align(batteryIcon.GetObject(), nullptr, LV_ALIGN_IN_TOP_RIGHT, -6, 2);
+  lv_obj_align(batteryIcon.GetObject(), nullptr, LV_ALIGN_IN_TOP_RIGHT, -stripInset, stripY);
 
   batteryValue = CreateLabel(lv_scr_act(), &jetbrains_mono_bold_16, colorMuted);
   lv_label_set_text_static(batteryValue, "");
 
   chargingIcon = CreateLabel(lv_scr_act(), &jetbrains_mono_bold_16, colorText);
-  lv_label_set_text_static(chargingIcon, symbolBolt);
+  lv_label_set_text_static(chargingIcon, Symbols::plug);
 
   // Date band
   datePanel = CreatePanel(26, 32);
@@ -75,22 +108,31 @@ WatchFacePanel::WatchFacePanel(Controllers::DateTime& dateTimeController,
   lv_label_set_text_static(dateLabel, "");
 
   // Time panel
-  timePanel = CreatePanel(62, 116);
+  timePanel = CreatePanel(62, 96);
   timeLabel = CreateLabel(timePanel, &jetbrains_mono_light_72, LV_COLOR_WHITE);
   lv_label_set_text_static(timeLabel, "");
   ampmLabel = CreateLabel(timePanel, &jetbrains_mono_bold_16, colorMuted);
   lv_label_set_text_static(ampmLabel, "");
 
-  // Steps band
-  stepsPanel = CreatePanel(182, 56);
-  stepsIcon = CreateLabel(stepsPanel, &jetbrains_mono_bold_20, colorText);
-  lv_label_set_text_static(stepsIcon, Symbols::shoe);
-  lv_obj_align(stepsIcon, nullptr, LV_ALIGN_IN_LEFT_MID, 8, 0);
-  stepsCaption = CreateLabel(stepsPanel, &jetbrains_mono_bold_16, colorMuted);
-  lv_label_set_text_static(stepsCaption, "STEPS");
-  lv_obj_align(stepsCaption, stepsIcon, LV_ALIGN_OUT_RIGHT_MID, 6, 0);
-  stepsValue = CreateLabel(stepsPanel, &jetbrains_mono_42, LV_COLOR_WHITE);
-  lv_label_set_text_static(stepsValue, "");
+  // Weather panel: current conditions over a divider and a 3-day forecast row
+  weatherPanel = CreatePanel(weatherY, weatherHeight);
+  weatherIcon = CreateLabel(weatherPanel, &fontawesome_weathericons, colorText);
+  weatherTemp = CreateLabel(weatherPanel, &jetbrains_mono_42, LV_COLOR_WHITE);
+  weatherHigh = CreateLabel(weatherPanel, &jetbrains_mono_bold_16, colorMuted);
+  weatherLow = CreateLabel(weatherPanel, &jetbrains_mono_bold_16, colorMuted);
+
+  lv_obj_t* divider = lv_obj_create(weatherPanel, nullptr);
+  lv_obj_set_size(divider, dividerWidth, 1);
+  lv_obj_set_pos(divider, (panelWidth - dividerWidth) / 2, dividerY);
+  lv_obj_set_style_local_bg_color(divider, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, colorRule);
+  lv_obj_set_style_local_border_width(divider, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, 0);
+  lv_obj_set_style_local_radius(divider, LV_OBJ_PART_MAIN, LV_STATE_DEFAULT, 0);
+
+  for (auto& day : forecastDays) {
+    day.name = CreateLabel(weatherPanel, &jetbrains_mono_bold_16, colorMuted);
+    day.icon = CreateLabel(weatherPanel, &jetbrains_mono_bold_16, colorText);
+    day.high = CreateLabel(weatherPanel, &jetbrains_mono_bold_16, colorText);
+  }
 
   taskRefresh = lv_task_create(RefreshTaskCallback, LV_DISP_DEF_REFR_PERIOD, LV_TASK_PRIO_MID, this);
   Refresh();
@@ -109,7 +151,8 @@ void WatchFacePanel::Refresh() {
 
   // DirtyValue::IsUpdated() clears the flag, so read each one exactly once.
   batteryPercent = batteryController.PercentRemaining();
-  charging = batteryController.IsCharging();
+  // Power present rather than IsCharging(): the bolt stays up while on the charger even once full.
+  charging = batteryController.IsPowerPresent();
   const bool percentChanged = batteryPercent.IsUpdated();
   const bool chargingChanged = charging.IsUpdated();
   if (percentChanged) {
@@ -121,7 +164,7 @@ void WatchFacePanel::Refresh() {
     lv_obj_set_hidden(chargingIcon, !charging.Get());
   }
   if (percentChanged || chargingChanged) {
-    // The percentage width varies (5% vs 100%), so the bolt follows it.
+    // The percentage width varies (5% vs 100%), so the plug follows it.
     lv_obj_align(chargingIcon, batteryValue, LV_ALIGN_OUT_LEFT_MID, -4, 0);
   }
 
@@ -142,8 +185,9 @@ void WatchFacePanel::Refresh() {
       lv_label_set_text_static(ampmLabel, "");
       lv_label_set_text_fmt(timeLabel, "%02d:%02d", hour, minute);
     }
-    lv_obj_align(timeLabel, nullptr, LV_ALIGN_CENTER, 0, 6);
-    lv_obj_align(ampmLabel, nullptr, LV_ALIGN_IN_TOP_LEFT, 10, 8);
+    // Digits sit below centre to clear the AM/PM label.
+    lv_obj_align(timeLabel, nullptr, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(ampmLabel, nullptr, LV_ALIGN_IN_TOP_LEFT, 10, 4);
 
     currentDate = std::chrono::time_point_cast<std::chrono::days>(currentDateTime.Get());
     if (currentDate.IsUpdated()) {
@@ -160,6 +204,98 @@ void WatchFacePanel::Refresh() {
   stepCount = motionController.NbSteps();
   if (stepCount.IsUpdated()) {
     lv_label_set_text_fmt(stepsValue, "%lu", stepCount.Get());
-    lv_obj_align(stepsValue, nullptr, LV_ALIGN_IN_RIGHT_MID, -8, 0);
+    lv_obj_align(stepsValue, stepsIcon, LV_ALIGN_OUT_RIGHT_MID, 4, 0);
   }
+
+  currentWeather = weatherService.Current();
+  if (currentWeather.IsUpdated()) {
+    UpdateCurrentWeather();
+  }
+
+  forecast = weatherService.GetForecast();
+  if (forecast.IsUpdated()) {
+    UpdateForecast();
+  }
+}
+
+int16_t WatchFacePanel::DisplayTemperature(const Controllers::SimpleWeatherService::Temperature& temperature) const {
+  if (settingsController.GetWeatherFormat() == Controllers::Settings::WeatherFormat::Imperial) {
+    return temperature.Fahrenheit();
+  }
+  return temperature.Celsius();
+}
+
+void WatchFacePanel::UpdateCurrentWeather() {
+  const auto& optWeather = currentWeather.Get();
+  if (optWeather) {
+    const char unit = settingsController.GetWeatherFormat() == Controllers::Settings::WeatherFormat::Imperial ? 'F' : 'C';
+    lv_obj_set_style_local_text_color(weatherIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, colorText);
+    lv_obj_set_style_local_text_color(weatherTemp, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_WHITE);
+    lv_label_set_text_static(weatherIcon, Symbols::GetSymbol(optWeather->iconId, weatherService.IsNight()));
+    lv_label_set_text_fmt(weatherTemp, "%d°%c", DisplayTemperature(optWeather->temperature), unit);
+    lv_label_set_text_fmt(weatherHigh, "H %d", DisplayTemperature(optWeather->maxTemperature));
+    lv_label_set_text_fmt(weatherLow, "L %d", DisplayTemperature(optWeather->minTemperature));
+  } else {
+    // No data yet (the phone hasn't pushed any): a dimmed placeholder keeps the panel from looking broken.
+    lv_obj_set_style_local_text_color(weatherIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, colorRule);
+    lv_obj_set_style_local_text_color(weatherTemp, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, colorRule);
+    lv_label_set_text_static(weatherIcon, Symbols::ban);
+    lv_label_set_text_static(weatherTemp, "--°");
+    lv_label_set_text_static(weatherHigh, "");
+    lv_label_set_text_static(weatherLow, "");
+  }
+  AlignLeftMid(weatherIcon, currentIconX, currentRowY);
+  AlignLeftMid(weatherTemp, currentTempX, currentRowY);
+  AlignRightMid(weatherHigh, highLowRight, highY);
+  AlignRightMid(weatherLow, highLowRight, lowY);
+}
+
+void WatchFacePanel::UpdateForecast() {
+  const auto& optForecast = forecast.Get();
+  // Day labels follow the stock Weather app: days[0] is the day after the forecast timestamp.
+  std::tm forecastDate {};
+  if (optForecast) {
+    const auto timestamp = static_cast<time_t>(optForecast->timestamp);
+    forecastDate = *std::localtime(&timestamp);
+  }
+
+  for (size_t i = 0; i < forecastDays.size(); i++) {
+    auto& day = forecastDays[i];
+    if (!optForecast || i >= optForecast->nbDays || !optForecast->days[i]) {
+      lv_label_set_text_static(day.name, "");
+      lv_label_set_text_static(day.icon, "");
+      lv_label_set_text_static(day.high, "");
+      continue;
+    }
+    const auto& data = *optForecast->days[i];
+
+    // tm_wday counts from Sunday = 0; Days counts from Monday = 1.
+    uint8_t wday = forecastDate.tm_wday + i + 1;
+    if (wday > 7) {
+      wday -= 7;
+    }
+    // Only a mixed-case accessor exists for an arbitrary weekday; upper-case it to match the date band.
+    const char* name = Controllers::DateTime::DayOfWeekShortToStringLow(static_cast<Controllers::DateTime::Days>(wday));
+    char upper[forecastDayNameLength + 1] {};
+    for (size_t c = 0; c < forecastDayNameLength && name[c] != '\0'; c++) {
+      upper[c] = static_cast<char>(std::toupper(static_cast<unsigned char>(name[c])));
+    }
+
+    lv_label_set_text(day.name, upper);
+    lv_label_set_text_static(day.icon, Symbols::GetSymbol(data.iconId, false));
+    lv_label_set_text_fmt(day.high, "%d", DisplayTemperature(data.maxTemperature));
+
+    const lv_coord_t x = forecastX + static_cast<lv_coord_t>(i) * forecastColumnWidth;
+    AlignLeftMid(day.name, x, forecastRowY);
+    AlignLeftMid(day.icon, x + forecastIconOffset, forecastRowY);
+    AlignLeftMid(day.high, x + forecastTempOffset, forecastRowY);
+  }
+}
+
+void WatchFacePanel::AlignLeftMid(lv_obj_t* obj, lv_coord_t x, lv_coord_t centerY) {
+  lv_obj_align(obj, nullptr, LV_ALIGN_IN_TOP_LEFT, x, centerY - lv_obj_get_height(obj) / 2);
+}
+
+void WatchFacePanel::AlignRightMid(lv_obj_t* obj, lv_coord_t right, lv_coord_t centerY) {
+  lv_obj_set_pos(obj, right - lv_obj_get_width(obj), centerY - lv_obj_get_height(obj) / 2);
 }

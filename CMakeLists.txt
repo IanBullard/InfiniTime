@@ -5,6 +5,10 @@ set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
 project(pinetime VERSION 1.16.0 LANGUAGES C CXX ASM)
 
+# Fork builds carry a suffix on the version string (SystemInfo, BLE Device Information, DFU file name)
+# so a fork image is never mistaken for a stock release.
+set(PINETIME_VERSION_SUFFIX "-ib" CACHE STRING "Suffix appended to the firmware version string")
+
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)
 
@@ -50,7 +54,7 @@ message("")
 message("BUILD CONFIGURATION")
 message("-------------------")
 message("    * Mode : " ${CMAKE_BUILD_TYPE})
-message("    * Version : " ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH})
+message("    * Version : " ${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}${PINETIME_VERSION_SUFFIX})
 message("    * Toolchain : " ${ARM_NONE_EABI_TOOLCHAIN_PATH})
 message("    * GitRef(S) : " ${PROJECT_GIT_COMMIT_HASH})
 message("    * NRF52 SDK : " ${NRF5_SDK_PATH})
